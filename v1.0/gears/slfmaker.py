@@ -1,7 +1,4 @@
-# gears/slfmaker.py
-
 from math import sin, cos, pi, sqrt, atan
-
 
 def normalize(x, y):
     """Нормализация вектора."""
@@ -10,16 +7,13 @@ def normalize(x, y):
     length = sqrt(x * x + y * y)
     return (x / length, y / length)
 
-
 def to_cartesian(r, theta):
     """Преобразование полярных координат в декартовы."""
     return (r * cos(theta), r * sin(theta))
 
-
 def involute(a, t):
     """Вычисляет точку инволюты окружности радиуса a при параметре t."""
     return [a * (sin(t) - t * cos(t)), a * (cos(t) + t * sin(t)) - a]
-
 
 class SLFMaker:
     def __init__(self, teeth_count, ts=5, depth=0.1, tolerance=0.001, is_circular=False):
@@ -112,10 +106,8 @@ class SLFMaker:
         """Вычисление точек для шестерни."""
         refinement = 1
         max_refinement = 100 
-        if self.is_circular:
-            halfteeth_count = self.teeth_count
-        else:
-            halfteeth_count = self.teeth_count * 2
+        # Изменено: не удваиваем количество зубьев для некруглых шестерён
+        halfteeth_count = self.teeth_count
         halfpitch = self.cpitch / 2.0
 
         while refinement <= max_refinement:
@@ -142,7 +134,7 @@ class SLFMaker:
                 lx = x
                 ly = y
 
-            print(f"Refinement {refinement}, Half-teeth = {actual_teeth}, Extra = {ccd}, C pitch = {halfpitch * 2.0}")
+            print(f"Refinement {refinement}, Teeth = {actual_teeth}, Extra = {ccd}, C pitch = {halfpitch * 2.0}")
             if halfteeth_count == actual_teeth and abs(ccd - halfpitch) < self.tolerance * 5:
                 break
 
