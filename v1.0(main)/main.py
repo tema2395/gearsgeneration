@@ -4,7 +4,6 @@ from tkinter import messagebox, filedialog
 try:
     import ezdxf
 except ImportError:
-    # Если ezdxf не установлен, можно вывести предупреждение (или просто игнорировать)
     pass
 
 def generate_ellipse_gear_outline(a, b, teeth, segments_per_tooth=10, tooth_height_factor=0.1):
@@ -219,7 +218,7 @@ class GearApp(tk.Tk):
         self.gear2_points = generate_ellipse_gear_outline(a2, b2, teeth2, 
                                                           segments_per_tooth=segments_pt,
                                                           tooth_height_factor=tooth_factor)
-        # Смещаем вторую шестерню вправо, чтобы "имитировать" зацепление (просто, без точной геометрии)
+        # Смещаем вторую шестерню вправо
         # Минимально можно взять a1 + a2 + небольшой зазор
         dx = a1 + a2 + 20
         self.gear2_points = shift_points(self.gear2_points, dx, 0)
