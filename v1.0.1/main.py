@@ -2,18 +2,19 @@ import math
 import tkinter as tk
 from tkinter import messagebox, filedialog
 
-# Если не установлено, нужно: pip install ezdxf
 try:
     import ezdxf
 except ImportError:
     ezdxf = None
 
+
 def shift_points(points, dx, dy):
     """Сместить набор точек на (dx, dy)."""
     return [(x + dx, y + dy) for (x, y) in points]
 
+
 def rotate_points(points, angle_deg):
-    """Повернуть набор точек вокруг (0,0) на угол angle_deg (градусы)."""
+    """Повернуть набор точек вокруг (0,0) на угол angle_deg (в градусах)."""
     angle = math.radians(angle_deg)
     cosA = math.cos(angle)
     sinA = math.sin(angle)
@@ -24,11 +25,13 @@ def rotate_points(points, angle_deg):
         result.append((x_rot, y_rot))
     return result
 
+
 def save_dxf_file(gear1_points, gear2_points, filename):
     """Сохранить оба набора точек (каждое - отдельная шестерня) в один DXF-файл."""
     if not ezdxf:
         messagebox.showerror("Ошибка", "Библиотека ezdxf не установлена.")
         return
+
     try:
         doc = ezdxf.new(dxfversion='R2010')
         msp = doc.modelspace()
@@ -73,45 +76,38 @@ def generate_involute_gear_outline(z, m, alpha_deg=20.0, N_profile=30):
 
     # 2) Определяем угол phi, при котором r(phi) = r_a
     #    r(phi) = r_b * sqrt(1 + phi^2).
-    #    Решаем: r_a = r_b * sqrt(1 + phi_a^2).
-    #    => (r_a / r_b)^2 = 1 + phi_a^2 => phi_a = sqrt(...)  если r_a > r_b
     if r_b < 1e-9 or r_a <= r_b:
         phi_a = 0.0
     else:
         phi_a = math.sqrt((r_a / r_b) ** 2 - 1.0)
 
     # Аналогично для r_f
-    #    r_f = r_b * sqrt(1 + phi_f^2)
-    #    => phi_f = sqrt((r_f / r_b)^2 - 1) если r_f >= r_b
     if r_f >= r_b and r_b > 1e-9:
         phi_f = math.sqrt((r_f / r_b) ** 2 - 1.0)
     else:
-        # если r_f < r_b или r_b=0, эвольвента начинается с phi=0
         phi_f = 0.0
 
     def involute_point(phi):
-        # Параметрические уравнения эвольвенты:
         # x = r_b*(cos(phi) + phi sin(phi))
         # y = r_b*(sin(phi) - phi cos(phi))
         x = r_b * (math.cos(phi) + phi * math.sin(phi))
         y = r_b * (math.sin(phi) - phi * math.cos(phi))
         return (x, y)
 
-    # 3) Строим "верхнюю" ветвь эвольвенты от phi_f до phi_a
+    # 3) "Верхняя" ветвь эвольвенты от phi_f до phi_a
     upper_profile = []
     for i in range(N_profile + 1):
         t = i / N_profile
         phi_cur = phi_f + (phi_a - phi_f) * t
         upper_profile.append(involute_point(phi_cur))
 
-    # 4) Делаем "нижнюю" ветвь (зеркало по X–оси)
+    # 4) "Нижняя" ветвь (зеркало по X–оси)
     lower_profile = []
-    # Разворачиваем upper_profile, чтобы идти "сверху вниз"
     for pt in reversed(upper_profile):
         x, y = pt
         lower_profile.append((x, -y))
 
-    # Склеиваем их в одну полилинию (убирая дубликат центральной точки)
+    # Склеиваем их в одну полилинию
     one_tooth_pts = lower_profile + upper_profile[1:]
 
     # 5) Тиражируем зуб по окружности z раз
@@ -161,7 +157,7 @@ class GearApp(tk.Tk):
 
         tk.Label(self, text="Число зубьев (Z2):").grid(row=row, column=0, sticky="e")
         self.entry_teeth2 = tk.Entry(self)
-        self.entry_teeth2.insert(0, "40")
+        self.entry_teeth2.insert(0, "15")
         self.entry_teeth2.grid(row=row, column=1, padx=5, pady=5)
         row += 1
 
@@ -197,7 +193,8 @@ class GearApp(tk.Tk):
         self.gear2_points = []
 
     def preview_gears(self):
-        """Генерируем и отображаем оба колеса на Canvas так, чтобы делительные окружности касались."""
+        """Генерируем и отображаем оба колеса на Canvas так, чтобы делительные окружности касались
+           и шестерня №2 была слегка повернута (зуб попадает во впадину)."""
         try:
             z1 = int(self.entry_teeth1.get())
             m1 = float(self.entry_mod1.get())
@@ -210,24 +207,28 @@ class GearApp(tk.Tk):
             messagebox.showerror("Ошибка", "Параметры заданы неверно. Введите числа.")
             return
 
-        # 1) Генерация контуров (по эвольвенте)
+        # Генерация контуров (по эвольвенте)
         self.gear1_points = generate_involute_gear_outline(z1, m1, alpha_deg=20.0,
                                                            N_profile=segments_pt)
         self.gear2_points = generate_involute_gear_outline(z2, m2, alpha_deg=20.0,
                                                            N_profile=segments_pt)
 
-        # 2) Межцентровое расстояние (для внешнего зацепления)
-        #    a = 0.5 * (d1 + d2) = 0.5 * ((m1*z1) + (m2*z2))
-        #    Это позволяет делительным окружностям (диаметрам d1 и d2) касаться.
+        # Межцентровое расстояние (для внешнего зацепления)
         dx = 0.5 * ((m1 * z1) + (m2 * z2))
 
-        # Если хотим "красиво повернуть" одну из шестерён, чтобы зуб заходил во впадину,
-        # можно сделать, например, gear2_points = rotate_points(self.gear2_points, some_angle)
-        # Пока оставим без поворота.
+        # -- ВАЖНО! -- Чтобы второй зуб попадал примерно во впадину первой шестерни,
+        #     повернем вторую шестерню на "полшаг" (или другой угол).
+        #     Угол шага = 360 / z2 (градусов). Возьмём половину.
+        tooth_angle_deg = 360.0 / z2
+        half_tooth_deg = tooth_angle_deg / 2.0
 
+        # Повернем (можно взять знак минус, чтобы повернуть в нужном направлении).
+        self.gear2_points = rotate_points(self.gear2_points, -half_tooth_deg)
+
+        # Сдвигаем вторую шестерню вправо.
         self.gear2_points = shift_points(self.gear2_points, dx, 0)
 
-        # 3) Рисуем оба колеса на Canvas
+        # Рисуем оба колеса на Canvas
         self.canvas.delete("all")
         all_points = self.gear1_points + self.gear2_points
         if not all_points:
@@ -261,7 +262,7 @@ class GearApp(tk.Tk):
         self.canvas.create_polygon(gear2_transformed, fill="#aaaaff", outline="black")
 
     def generate_dxf(self):
-        """Сохраняем оба колеса в один DXF-файл (две отдельные полилинии)."""
+        """Сохраняем оба колеса в один DXF-файл."""
         if not self.gear1_points or not self.gear2_points:
             messagebox.showwarning("Внимание", "Сначала нажмите «Просмотр» для генерации колёс.")
             return
