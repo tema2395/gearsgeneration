@@ -1,101 +1,34 @@
 import math
 import tkinter as tk
 from tkinter import messagebox, filedialog
+
+# Если не установлено, нужно: pip install ezdxf
 try:
     import ezdxf
 except ImportError:
-    pass
-
-def generate_ellipse_gear_outline(a, b, teeth, segments_per_tooth=10, tooth_height_factor=0.1):
-    """
-    Генерирует список (x, y) точек, образующих замкнутый контур "эллиптической шестерни".
-    
-    Параметры:
-    - a, b: большие и малые полуоси эллипса
-    - teeth: число зубьев
-    - segments_per_tooth: сколько сегментов эллипса будет между соседними зубьями
-    - tooth_height_factor: насколько сильно "выпирает" зуб (доля от радиального расстояния)
-    
-    Идея:
-    1) Всю окружность (0..2π) делим на teeth * segments_per_tooth равных кусочков.
-    2) Для каждого шага вычисляем базовую точку эллипса (x0, y0).
-    3) Определяем, насколько близко текущий угол к центру зуба. Центр зуба расположен
-       на углах: angle_center = (i + 0.5)*2π/teeth, i=0..teeth-1.
-    4) Если мы «близко» к центру зуба, расширяем точку в направлении нормали на некий процент
-       (tooth_height_factor).
-    5) Таким образом формируем одну замкнутую кривую без лишних «перебросов» через центр.
-    """
-    total_segments = teeth * segments_per_tooth
-    step = 2 * math.pi / total_segments
-    
-    # Углы, где находятся «центры зубьев»
-    tooth_centers = [(i + 0.5) * (2 * math.pi / teeth) for i in range(teeth)]
-    
-    # Функция для поиска ближайшего центра зуба
-    def nearest_tooth_center_angle(angle):
-        """
-        Возвращает угол центра зуба, который ближе всего к данному angle.
-        """
-        # Нормируем угол в диапазон [0, 2π)
-        angle = angle % (2 * math.pi)
-        # Ищем ближайший центр
-        return min(tooth_centers, key=lambda c: abs((c % (2*math.pi)) - angle))
-    
-    outline_points = []
-    
-    for i in range(total_segments):
-        angle = i * step
-        # Исходная точка на эллипсе
-        x0 = a * math.cos(angle)
-        y0 = b * math.sin(angle)
-        
-        # Радиус (от центра до эллипса)
-        base_radius = math.sqrt(x0**2 + y0**2)  # длина вектора (x0, y0)
-        
-        # Ищем ближайший центр зуба
-        center_angle = nearest_tooth_center_angle(angle)
-        
-        # Насколько мы «близко» к центру зуба (по углу) -- 0 означает совпадение с центром
-        angle_diff = abs(center_angle - angle)
-        # Но угол может "заходить" за 2π, учитываем зеркально
-        angle_diff = min(angle_diff, 2*math.pi - angle_diff)
-        
-        # Для плавного подъёма зуба используем простую «треугольную» или «колоколообразную» функцию.
-        # Чем меньше angle_diff, тем выше зуб.
-        # Например, зададим ширину активной зоны зуба (в радианах):
-        tooth_half_width = (math.pi*2 / teeth) / 4.0  # четверть межзубового шага
-        
-        if angle_diff < tooth_half_width:
-            # от 0 до tooth_half_width => плавная функция (например cos)
-            # max высота зуба в центре, 0 — на краях
-            # здесь берём от 0..1
-            ratio = math.cos(math.pi * angle_diff / tooth_half_width / 2)
-            # ratio ~ 1 в центре зуба, ~ 0 на краю
-            extend = tooth_height_factor * base_radius * ratio
-        else:
-            extend = 0
-        
-        # Вычисляем координату с учётом выступа зуба
-        # Направление от (0,0) к (x0, y0)
-        if base_radius > 1e-9:
-            # нормализованный вектор
-            nx, ny = x0 / base_radius, y0 / base_radius
-        else:
-            nx, ny = 0, 0
-        
-        x = x0 + nx * extend
-        y = y0 + ny * extend
-        
-        outline_points.append((x, y))
-    
-    return outline_points
+    ezdxf = None
 
 def shift_points(points, dx, dy):
     """Сместить набор точек на (dx, dy)."""
     return [(x + dx, y + dy) for (x, y) in points]
 
+def rotate_points(points, angle_deg):
+    """Повернуть набор точек вокруг (0,0) на угол angle_deg (градусы)."""
+    angle = math.radians(angle_deg)
+    cosA = math.cos(angle)
+    sinA = math.sin(angle)
+    result = []
+    for (x, y) in points:
+        x_rot = x*cosA - y*sinA
+        y_rot = x*sinA + y*cosA
+        result.append((x_rot, y_rot))
+    return result
+
 def save_dxf_file(gear1_points, gear2_points, filename):
     """Сохранить оба набора точек (каждое - отдельная шестерня) в один DXF-файл."""
+    if not ezdxf:
+        messagebox.showerror("Ошибка", "Библиотека ezdxf не установлена.")
+        return
     try:
         doc = ezdxf.new(dxfversion='R2010')
         msp = doc.modelspace()
@@ -110,67 +43,138 @@ def save_dxf_file(gear1_points, gear2_points, filename):
         messagebox.showerror("Ошибка", f"Не удалось сохранить DXF: {str(e)}")
 
 
+def generate_involute_gear_outline(z, m, alpha_deg=20.0, N_profile=30):
+    """
+    Генерируем 2D-контур эвольвентной шестерни (спур-колеса).
+
+    Параметры:
+    - z: число зубьев
+    - m: модуль
+    - alpha_deg: угол зацепления (обычно 20 градусов)
+    - N_profile: количество точек на одной "ветви" эвольвенты
+
+    Возвращает:
+      список (x, y) всех вершин (замкнутый или почти замкнутый) всей шестерни.
+      Упрощённый профиль: эвольвента от r_f до r_a, дублируется, тиражируется z раз.
+    """
+    alpha = math.radians(alpha_deg)
+
+    # 1) Основные размеры
+    d = m * z            # делительный диаметр
+    r = d / 2
+    d_b = d * math.cos(alpha)  # базовый диаметр
+    r_b = d_b / 2
+    # Диаметр вершин (аддендум)
+    d_a = d + 2 * m
+    r_a = d_a / 2
+    # Диаметр впадин (упрощённо)
+    d_f = d - 2.5 * m
+    r_f = max(d_f / 2, 0)  # чтоб не было отрицательного
+
+    # 2) Определяем угол phi, при котором r(phi) = r_a
+    #    r(phi) = r_b * sqrt(1 + phi^2).
+    #    Решаем: r_a = r_b * sqrt(1 + phi_a^2).
+    #    => (r_a / r_b)^2 = 1 + phi_a^2 => phi_a = sqrt(...)  если r_a > r_b
+    if r_b < 1e-9 or r_a <= r_b:
+        phi_a = 0.0
+    else:
+        phi_a = math.sqrt((r_a / r_b) ** 2 - 1.0)
+
+    # Аналогично для r_f
+    #    r_f = r_b * sqrt(1 + phi_f^2)
+    #    => phi_f = sqrt((r_f / r_b)^2 - 1) если r_f >= r_b
+    if r_f >= r_b and r_b > 1e-9:
+        phi_f = math.sqrt((r_f / r_b) ** 2 - 1.0)
+    else:
+        # если r_f < r_b или r_b=0, эвольвента начинается с phi=0
+        phi_f = 0.0
+
+    def involute_point(phi):
+        # Параметрические уравнения эвольвенты:
+        # x = r_b*(cos(phi) + phi sin(phi))
+        # y = r_b*(sin(phi) - phi cos(phi))
+        x = r_b * (math.cos(phi) + phi * math.sin(phi))
+        y = r_b * (math.sin(phi) - phi * math.cos(phi))
+        return (x, y)
+
+    # 3) Строим "верхнюю" ветвь эвольвенты от phi_f до phi_a
+    upper_profile = []
+    for i in range(N_profile + 1):
+        t = i / N_profile
+        phi_cur = phi_f + (phi_a - phi_f) * t
+        upper_profile.append(involute_point(phi_cur))
+
+    # 4) Делаем "нижнюю" ветвь (зеркало по X–оси)
+    lower_profile = []
+    # Разворачиваем upper_profile, чтобы идти "сверху вниз"
+    for pt in reversed(upper_profile):
+        x, y = pt
+        lower_profile.append((x, -y))
+
+    # Склеиваем их в одну полилинию (убирая дубликат центральной точки)
+    one_tooth_pts = lower_profile + upper_profile[1:]
+
+    # 5) Тиражируем зуб по окружности z раз
+    full_gear_points = []
+    tooth_angle = 2 * math.pi / z
+
+    for k in range(z):
+        angle_k = k * tooth_angle
+        cosA = math.cos(angle_k)
+        sinA = math.sin(angle_k)
+        for (x, y) in one_tooth_pts:
+            x_rot = x * cosA - y * sinA
+            y_rot = x * sinA + y * cosA
+            full_gear_points.append((x_rot, y_rot))
+
+    return full_gear_points
+
+
 class GearApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Генерация двух некруглых зубчатых колёс")
+        self.title("Генерация двух эвольвентных зубчатых колёс (зацепление)")
         self.geometry("700x600")
 
-        # ==== Шестерня №1 ====
         row = 0
-        tk.Label(self, text="Шестерня №1:", font=("Arial", 10, "bold")).grid(row=row, column=0, padx=5, pady=5, sticky="w")
-        row += 1
-
-        tk.Label(self, text="Большая полуось (a1):").grid(row=row, column=0, sticky="e")
-        self.entry_a1 = tk.Entry(self)
-        self.entry_a1.insert(0, "100")
-        self.entry_a1.grid(row=row, column=1, padx=5, pady=5)
-        row += 1
-
-        tk.Label(self, text="Малая полуось (b1):").grid(row=row, column=0, sticky="e")
-        self.entry_b1 = tk.Entry(self)
-        self.entry_b1.insert(0, "60")
-        self.entry_b1.grid(row=row, column=1, padx=5, pady=5)
+        # ==== Шестерня №1 ====
+        tk.Label(self, text="Шестерня №1:", font=("Arial", 10, "bold")) \
+            .grid(row=row, column=0, padx=5, pady=5, sticky="w")
         row += 1
 
         tk.Label(self, text="Число зубьев (Z1):").grid(row=row, column=0, sticky="e")
         self.entry_teeth1 = tk.Entry(self)
-        self.entry_teeth1.insert(0, "6")
+        self.entry_teeth1.insert(0, "20")  # по умолчанию 20 зубьев
         self.entry_teeth1.grid(row=row, column=1, padx=5, pady=5)
         row += 1
 
+        tk.Label(self, text="Модуль (m1):").grid(row=row, column=0, sticky="e")
+        self.entry_mod1 = tk.Entry(self)
+        self.entry_mod1.insert(0, "2")  # по умолчанию 2 мм
+        self.entry_mod1.grid(row=row, column=1, padx=5, pady=5)
+        row += 1
+
         # ==== Шестерня №2 ====
-        tk.Label(self, text="Шестерня №2:", font=("Arial", 10, "bold")).grid(row=row, column=0, padx=5, pady=5, sticky="w")
-        row += 1
-
-        tk.Label(self, text="Большая полуось (a2):").grid(row=row, column=0, sticky="e")
-        self.entry_a2 = tk.Entry(self)
-        self.entry_a2.insert(0, "80")
-        self.entry_a2.grid(row=row, column=1, padx=5, pady=5)
-        row += 1
-
-        tk.Label(self, text="Малая полуось (b2):").grid(row=row, column=0, sticky="e")
-        self.entry_b2 = tk.Entry(self)
-        self.entry_b2.insert(0, "50")
-        self.entry_b2.grid(row=row, column=1, padx=5, pady=5)
+        tk.Label(self, text="Шестерня №2:", font=("Arial", 10, "bold")) \
+            .grid(row=row, column=0, padx=5, pady=5, sticky="w")
         row += 1
 
         tk.Label(self, text="Число зубьев (Z2):").grid(row=row, column=0, sticky="e")
         self.entry_teeth2 = tk.Entry(self)
-        self.entry_teeth2.insert(0, "6")
+        self.entry_teeth2.insert(0, "40")
         self.entry_teeth2.grid(row=row, column=1, padx=5, pady=5)
         row += 1
 
-        # ==== Параметры зубьев (общие) ====
-        tk.Label(self, text="Высота зуба (доля от радиуса):").grid(row=row, column=0, sticky="e")
-        self.entry_tooth_factor = tk.Entry(self)
-        self.entry_tooth_factor.insert(0, "0.1")  # 10% от радиуса
-        self.entry_tooth_factor.grid(row=row, column=1, padx=5, pady=5)
+        tk.Label(self, text="Модуль (m2):").grid(row=row, column=0, sticky="e")
+        self.entry_mod2 = tk.Entry(self)
+        self.entry_mod2.insert(0, "2")
+        self.entry_mod2.grid(row=row, column=1, padx=5, pady=5)
         row += 1
 
-        tk.Label(self, text="Сегментов на один зуб (детализация):").grid(row=row, column=0, sticky="e")
+        # ==== Параметры для расчёта эвольвенты ====
+        tk.Label(self, text="Сегментов на эвольвенту:").grid(row=row, column=0, sticky="e")
         self.entry_segments_per_tooth = tk.Entry(self)
-        self.entry_segments_per_tooth.insert(0, "10")
+        self.entry_segments_per_tooth.insert(0, "30")
         self.entry_segments_per_tooth.grid(row=row, column=1, padx=5, pady=5)
         row += 1
 
@@ -193,37 +197,37 @@ class GearApp(tk.Tk):
         self.gear2_points = []
 
     def preview_gears(self):
-        """
-        Генерируем и отображаем оба колеса на Canvas.
-        """
+        """Генерируем и отображаем оба колеса на Canvas так, чтобы делительные окружности касались."""
         try:
-            a1 = float(self.entry_a1.get())
-            b1 = float(self.entry_b1.get())
-            teeth1 = int(self.entry_teeth1.get())
+            z1 = int(self.entry_teeth1.get())
+            m1 = float(self.entry_mod1.get())
 
-            a2 = float(self.entry_a2.get())
-            b2 = float(self.entry_b2.get())
-            teeth2 = int(self.entry_teeth2.get())
+            z2 = int(self.entry_teeth2.get())
+            m2 = float(self.entry_mod2.get())
 
-            tooth_factor = float(self.entry_tooth_factor.get())
             segments_pt = int(self.entry_segments_per_tooth.get())
         except ValueError:
             messagebox.showerror("Ошибка", "Параметры заданы неверно. Введите числа.")
             return
 
-        # Генерация контуров (единый замкнутый контур для каждого колеса)
-        self.gear1_points = generate_ellipse_gear_outline(a1, b1, teeth1, 
-                                                          segments_per_tooth=segments_pt,
-                                                          tooth_height_factor=tooth_factor)
-        self.gear2_points = generate_ellipse_gear_outline(a2, b2, teeth2, 
-                                                          segments_per_tooth=segments_pt,
-                                                          tooth_height_factor=tooth_factor)
-        # Смещаем вторую шестерню вправо
-        # Минимально можно взять a1 + a2 + небольшой зазор
-        dx = a1 + a2 + 20
+        # 1) Генерация контуров (по эвольвенте)
+        self.gear1_points = generate_involute_gear_outline(z1, m1, alpha_deg=20.0,
+                                                           N_profile=segments_pt)
+        self.gear2_points = generate_involute_gear_outline(z2, m2, alpha_deg=20.0,
+                                                           N_profile=segments_pt)
+
+        # 2) Межцентровое расстояние (для внешнего зацепления)
+        #    a = 0.5 * (d1 + d2) = 0.5 * ((m1*z1) + (m2*z2))
+        #    Это позволяет делительным окружностям (диаметрам d1 и d2) касаться.
+        dx = 0.5 * ((m1 * z1) + (m2 * z2))
+
+        # Если хотим "красиво повернуть" одну из шестерён, чтобы зуб заходил во впадину,
+        # можно сделать, например, gear2_points = rotate_points(self.gear2_points, some_angle)
+        # Пока оставим без поворота.
+
         self.gear2_points = shift_points(self.gear2_points, dx, 0)
 
-        # Рисуем оба колеса на Canvas
+        # 3) Рисуем оба колеса на Canvas
         self.canvas.delete("all")
         all_points = self.gear1_points + self.gear2_points
         if not all_points:
@@ -237,8 +241,8 @@ class GearApp(tk.Tk):
         width = self.canvas.winfo_width()
         height = self.canvas.winfo_height()
         padding = 20
-        gear_width = max_x - min_x if max_x != min_x else 1
-        gear_height = max_y - min_y if max_y != min_y else 1
+        gear_width = (max_x - min_x) if max_x != min_x else 1
+        gear_height = (max_y - min_y) if max_y != min_y else 1
         scale_x = (width - 2*padding) / gear_width
         scale_y = (height - 2*padding) / gear_height
         scale = min(scale_x, scale_y)
@@ -250,19 +254,14 @@ class GearApp(tk.Tk):
             y_t = (max_y - y) * scale + padding
             return (x_t, y_t)
 
-        # Трансформируем и рисуем многоугольники
         gear1_transformed = [transform(p) for p in self.gear1_points]
         gear2_transformed = [transform(p) for p in self.gear2_points]
 
-        # Заливка первым цветом
         self.canvas.create_polygon(gear1_transformed, fill="#cccccc", outline="black")
-        # Заливка вторым цветом
         self.canvas.create_polygon(gear2_transformed, fill="#aaaaff", outline="black")
 
     def generate_dxf(self):
-        """
-        Сохраняем оба колеса в один DXF-файл (два отдельных полилинейных контура).
-        """
+        """Сохраняем оба колеса в один DXF-файл (две отдельные полилинии)."""
         if not self.gear1_points or not self.gear2_points:
             messagebox.showwarning("Внимание", "Сначала нажмите «Просмотр» для генерации колёс.")
             return
@@ -272,7 +271,7 @@ class GearApp(tk.Tk):
             filetypes=[("DXF files", "*.dxf"), ("All files", "*.*")]
         )
         if not filename:
-            return  # отмена
+            return  # пользователь отменил
 
         try:
             save_dxf_file(self.gear1_points, self.gear2_points, filename)
