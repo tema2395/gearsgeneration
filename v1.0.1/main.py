@@ -305,22 +305,18 @@ class GearApp(tk.Tk):
 
         # -------- Расставляем колёса «в зацеплении» --------
 
-        # 1) Если оба круговые — пусть делительные окружности касаются
         dx = 0.0
         if type1 == "circle" and type2 == "circle":
             d1 = m1_circle * z1_circle
             d2 = m2_circle * z2_circle
             dx = 0.5*(d1 + d2)
-            # -- Для "зуб-в-выемку" сделаем небольшой поворот второй шестерни:
             tooth_angle_deg = 360.0 / z2_circle
             half_tooth_deg = tooth_angle_deg / 2.0
-            # Повернём вторую колёсико (подбирайте знак "-", "+", величину)
+
             self.gear2_points = rotate_points(self.gear2_points, -half_tooth_deg)
 
         else:
-            # 2) Если есть хотя бы одно эллиптическое — сделаем поменьше зазор,
-            #    чтобы они "соприкасались" более-менее.
-            #    Берём просто (a1 + a2), если обе эллиптические, или (r1 + r2), если одна круг.
+
             dist1 = 0
             if type1 == "ellipse":
                 # Пусть "средний радиус" ~ (a1+b1)/2
@@ -335,13 +331,12 @@ class GearApp(tk.Tk):
             else:
                 dist2 = (m2_circle * z2_circle)/2.0
 
-            # делаем небольшую "скидку", чтобы чуть соприкасались
-            dx = (dist1 + dist2) - 10  # подвинуть "плотнее", на 10 ед. меньше
 
-            # Если нужно, можно тоже слегка повернуть второе колесо,
+            dx = (dist1 + dist2) - 10 
+
             self.gear2_points = rotate_points(self.gear2_points, -10.0)
 
-        # Сдвигаем 2-е колесо
+
         self.gear2_points = shift_points(self.gear2_points, dx, 0)
 
         # -------------- Рисуем --------------
